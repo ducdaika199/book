@@ -1,0 +1,10 @@
+# This is a example about schema
+
+query fetchTest {
+  characters {
+    info {
+      count
+      pages
+    }
+  }
+}

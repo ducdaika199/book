@@ -1,0 +1,106 @@
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+image: $PLATFORM_DOCKER_REGISTRY_URL/dockerhub/node:18.12.1-bullseye-slim
+
+cache: &global_cache
+  paths:
+    - node_modules/
+    - .yarn
+  policy: pull
+
+stages:
+  - cache
+  - linting
+  - test
+  - build-resource
+  - build-docker
+  - deploy
+
+global-cache:
+  stage: cache
+  only:
+    refs:
+      - main
+      - merge_requests
+    changes:
+      - yarn.lock
+  cache:
+    <<: *global_cache
+    policy: pull-push
+  script:
+    - yarn install --cache-folder .yarn
+
+commit-lint:
+  stage: linting
+  only:
+    - main
+    - tags
+    - uat
+    - merge_requests
+  script:
+    - echo "$CI_COMMIT_MESSAGE" | npx commitlint
+code-lint:
+  stage: linting
+  only:
+    - main
+    - tags
+    - uat
+    - merge_requests
+  script:
+    - npx yarn lint
+
+test:
+  stage: test
+  needs:
+    - code-lint
+    - commit-lint
+  only:
+    - main
+    - merge_requests
+  cache:
+    <<: *global_cache
+  script:
+    - yarn test:ci
+
+build-resource:
+  stage: build-resource
+
+  needs:
+    - test
+
+  only:
+    - merge_requests
+  script:
+    - CI=false npx yarn build
+    - if [ $CI_COMMIT_BRANCH == "main" ]; then npx yarn sonar; fi
+  cache:
+    <<: *global_cache
+
+build-docker:
+  stage: build-docker
+  image:
+    name: $PLATFORM_DOCKER_REGISTRY_URL/gcr.io/kaniko-project/executor:debug
+    entrypoint: ['']
+  only:
+    - main
+  before_script:
+    - export TAG=$CI_COMMIT_TAG
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"credsStore\":\"ecr-login\"}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context . --dockerfile Dockerfile --destination $PLATFORM_DOCKER_REGISTRY_URL/book:$TAG --build-arg=TARGET_ENV=prod
+
+deploy:
+  stage: deploy
+  image: $PLATFORM_DOCKER_REGISTRY_URL/dockerhub/alpine/k8s:1.17.5
+  needs:
+    - build-docker
+  only:
+    - main
+  dependencies: []
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - aws eks --region $PLATFORM_AWS_REGION update-kubeconfig --name $PLATFORM_EKS_CLUSTER --kubeconfig kubeconfig
+    - kubectl --kubeconfig kubeconfig -n gsp-staging rollout restart deployments book

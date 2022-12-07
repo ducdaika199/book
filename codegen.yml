@@ -1,0 +1,11 @@
+overwrite: true
+schema: ${NEXT_PUBLIC_GRAPHQL_ENDPOINT}
+documents: 'src/graphql/**/*.graphql'
+generates:
+  src/graphql/generated/index.ts:
+    plugins:
+      - 'typescript'
+      - 'typescript-operations'
+      - 'typescript-react-apollo'
+    config:
+      withHooks: true
